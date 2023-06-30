@@ -1,0 +1,31 @@
+###########################################
+# Syntax Coloring Map For DHT-sensor-library
+###########################################
+
+###########################################
+# Datatypes (KEYWORD1)
+###########################################
+
+SmartDHT  KEYWORD1
+
+###########################################
+# Methods and Functions (KEYWORD2)
+###########################################
+
+getType             KEYWORD2
+setType             KEYWORD2
+reset               KEYWORD2
+read                KEYWORD2
+readTemperature     KEYWORD2
+convertCtoF         KEYWORD2
+convertFtoC         KEYWORD2
+computeHeatIndex    KEYWORD2
+readHumidity        KEYWORD2
+readTemperature     KEYWORD2
+setHumOffset        KEYWORD2
+setTempOffset       KEYWORD2
+getHumOffset        KEYWORD2
+getTempOffset       KEYWORD2
+powerUp             KEYWORD2
+powerDown           KEYWORD2
+loop                KEYWORD2
