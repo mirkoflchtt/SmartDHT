@@ -34,21 +34,12 @@
 //  allows to overrule SMARTDHT_INVALID_VALUE e.g. to prevent spike in graphs.
 #define SMARTDHT_INVALID_VALUE              (NAN)
 
-//  bits are timing based (datasheet)
-//  26-28us ==> 0
-//  70 us   ==> 1
-//  See https://github.com/RobTillaart/DHTNew/issues/11
-#ifndef SMARTDHT_BIT_THRESHOLD
-#define SMARTDHT_BIT_THRESHOLD              (50)
-#endif
-
-
 typedef enum {
   SMARTDHT_OK                               = 0,
   SMARTDHT_ERROR_CHECKSUM                   = -1,
-  SMARTDHT_ERROR_TIMEOUT_A                  = -2,
-  SMARTDHT_ERROR_BIT_SHIFT                  = -3,
-  SMARTDHT_ERROR_SENSOR_NOT_READY           = -4,
+  SMARTDHT_ERROR_BIT_SHIFT                  = -2,
+  SMARTDHT_ERROR_SENSOR_NOT_READY           = -3,
+  SMARTDHT_ERROR_TIMEOUT_A                  = -4,
   SMARTDHT_ERROR_TIMEOUT_C                  = -5,
   SMARTDHT_ERROR_TIMEOUT_D                  = -6,
   SMARTDHT_ERROR_TIMEOUT_B                  = -7,
@@ -116,11 +107,11 @@ private:
   bool     _waitForRead;
   bool     _suppressError;
   uint16_t _readDelay;
-  //  buffer to receive data
-  uint8_t  _bits[5];
 
   SmartDHTError _read(void);
-  SmartDHTError _readSensor(void);
+  SmartDHTError _readSensor(uint8_t* data);
+  SmartDHTError _readExit(const SmartDHTError error);
+
   bool     _waitFor(const uint8_t state, const uint32_t timeout);
 };
 

@@ -11,10 +11,16 @@
 
 #define SMARTDHT_MAX_CYCLES                   (90)
 
+//  bits are timing based (datasheet)
+//  26-28us ==> 0
+//  70 us   ==> 1
+//  See https://github.com/RobTillaart/DHTNew/issues/11
+#define SMARTDHT_BIT_THRESHOLD                (50)
+
 /* these defines are not for user to adjust (microseconds) */
 #define SMARTDHT_DHT11_WAKEUP                 (18 * 1100UL)
 #define SMARTDHT_DHT_WAKEUP                   (1 * 1100UL)
-#define SMARTDHT_SI7021_WAKEUP                (500)
+#define SMARTDHT_SI7021_WAKEUP                (500UL)
 
 /*
  * READ_DELAY for blocking read
@@ -50,8 +56,7 @@ _temperature(0.0f),
 _lastRead(0),
 _waitForRead(false),
 _suppressError(false),
-_readDelay(0),
-_bits()
+_readDelay(0)
 {
   setType(type);
   reset();
@@ -73,7 +78,6 @@ void SmartDHT::reset(void)
   _lastRead      = 0;
   _waitForRead   = false;
   _suppressError = false;
-  // _readDelay     = 0;
 }
 
 
@@ -181,7 +185,9 @@ int SmartDHT::read(void)
 {
   while (millis() - _lastRead < _readDelay)
   {
-    if (!_waitForRead) return SMARTDHT_WAITING_FOR_READ;
+    if (!_waitForRead) {
+      return SMARTDHT_WAITING_FOR_READ;
+    }
     yield();
   }
   if (_type != 0) {
@@ -224,19 +230,10 @@ int SmartDHT::read(void)
 //  SMARTDHT_ERROR_TIMEOUT_D
 SmartDHTError SmartDHT::_read(void)
 {
+  uint8_t _bits[5];
+
   //  READ VALUES
-  SmartDHTError rv = _readSensor();
-
-  //  Data-bus's free status is high voltage level.
-  pinMode(_dataPin, OUTPUT);
-  digitalWrite(_dataPin, HIGH);
-  _lastRead = millis();
-
-  //  TEST CHECKSUM
-  const uint8_t sum = _bits[0] + _bits[1] + _bits[2] + _bits[3];
-  if (_bits[4] != sum) {
-    return SMARTDHT_ERROR_CHECKSUM;
-  }
+  const SmartDHTError rv = _readSensor(_bits);//  bits are timing based (datasheet)
 
   if (rv != SMARTDHT_OK) {
     if (_suppressError == false) {
@@ -245,6 +242,7 @@ SmartDHTError SmartDHT::_read(void)
     }
     return rv;        //  propagate error value
   }
+  _lastRead = millis();
 
   _humidity = _humOffset;
   _temperature = _tempOffset;
@@ -285,6 +283,7 @@ SmartDHTError SmartDHT::_read(void)
 
 void SmartDHT::powerUp(void)
 {
+  pinMode(_dataPin, OUTPUT);
   digitalWrite(_dataPin, HIGH);
   //  do a dummy read to sync the sensor
   read();
@@ -293,6 +292,7 @@ void SmartDHT::powerUp(void)
 
 void SmartDHT::powerDown(void)
 {
+  pinMode(_dataPin, OUTPUT);
   digitalWrite(_dataPin, LOW);
 }
 
@@ -306,10 +306,14 @@ bool SmartDHT::loop(void)
 //  PRIVATE
 //
 
-static __inline
-SmartDHTError _readExit(const SmartDHTError error)
+SmartDHTError SmartDHT::_readExit(const SmartDHTError error)
 {
   SMARTDHT_ENABLE_IRQ
+
+  //  Data-bus's free status is high voltage level.
+  pinMode(_dataPin, OUTPUT);
+  digitalWrite(_dataPin, HIGH);
+
   return error;
 }
 
@@ -322,18 +326,21 @@ SmartDHTError _readExit(const SmartDHTError error)
 //  SMARTDHT_ERROR_TIMEOUT_B
 //  SMARTDHT_ERROR_TIMEOUT_C
 //  SMARTDHT_ERROR_TIMEOUT_D
-SmartDHTError SmartDHT::_readSensor(void)
+SmartDHTError SmartDHT::_readSensor(uint8_t* data)
 {
   //  INIT BUFFERVAR TO RECEIVE DATA
   uint8_t i;
 
   //  CLEAR DATA BUFFER
   for (i=0; i<5; i++) {
-    _bits[i] = 0;
+    data[i] = 0;
   }
 
-  //  REQUEST SAMPLE - SEND WAKEUP TO SENSOR
   pinMode(_dataPin, OUTPUT);
+  digitalWrite(_dataPin, HIGH);
+  delayMicroseconds(10);
+
+  //  REQUEST SAMPLE - SEND WAKEUP TO SENSOR
   digitalWrite(_dataPin, LOW);
 
   //  HANDLE SI7021 separately (see #79)
@@ -359,11 +366,12 @@ SmartDHTError SmartDHT::_readSensor(void)
   //  SENSOR PULLS LOW after 6000-10000 us
   const uint32_t WAITFORSENSOR = (_type == DHT11) ? 15000UL : 50UL;
 
-  //  HOST GIVES CONTROL TO SENSOR
+  /* HOST GIVES CONTROL TO SENSOR */
   digitalWrite(_dataPin, HIGH);
-  delayMicroseconds(2);
-  pinMode(_dataPin, INPUT_PULLUP);
+  delayMicroseconds(4);
 
+  /* Entering critical section */
+  pinMode(_dataPin, INPUT_PULLUP);
   SMARTDHT_DISABLE_IRQ
 
   if (_waitFor(LOW, WAITFORSENSOR)) {
@@ -395,23 +403,13 @@ SmartDHTError SmartDHT::_readSensor(void)
           26-28 us  ==>  0
           70 us  ==>  1
       */
-      const uint32_t t = micros() + SMARTDHT_BIT_THRESHOLD;
+      const uint32_t start = micros();
       if (_waitFor(LOW, SMARTDHT_MAX_CYCLES)) {
         return _readExit(SMARTDHT_ERROR_TIMEOUT_D);
       }
 
-      // _bits[i] |= ((micros() - t) > SMARTDHT_BIT_THRESHOLD) ? mask : 0x0;
-      _bits[i] |= (micros() > t) ? mask : 0x0;
+      data[i] |= ((micros() - start) > SMARTDHT_BIT_THRESHOLD) ? mask : 0x0;
     }
-
-    /*
-    //  PREPARE FOR NEXT BIT
-    mask >>= 1;
-    if (mask == 0x0) {
-      mask = 0x80;
-      idx++;
-    }
-    */
   }
 
   //  After 40 bits the sensor pulls the line LOW for 50 us
@@ -421,7 +419,17 @@ SmartDHTError SmartDHT::_readSensor(void)
   //  CATCH RIGHTSHIFT BUG ESP (only 1 single bit shift)
   //  humidity is maximum 1000 = 0x03E8 for DHT22 and 0x6400 for DHT11
   //  so most significant bit may never be set.
-  return _readExit((_bits[0] & 0x80) ? SMARTDHT_ERROR_BIT_SHIFT : SMARTDHT_OK);
+  const SmartDHTError ret = _readExit((data[0] & 0x80) ? SMARTDHT_ERROR_BIT_SHIFT : SMARTDHT_OK);
+
+  if (ret == SMARTDHT_OK) {
+    //  TEST CHECKSUM
+    const uint8_t checksum = data[0] + data[1] + data[2] + data[3];
+    if (data[4] != checksum) {
+      return SMARTDHT_ERROR_CHECKSUM;
+    }
+  }
+
+  return ret;
 }
 
 /**
@@ -431,16 +439,19 @@ SmartDHTError SmartDHT::_readSensor(void)
 bool SmartDHT::_waitFor(const uint8_t state, const uint32_t timeout)
 {
   const uint32_t start = micros();
-  uint8_t  count = 8;
+  uint32_t  count = 0;
   while ((micros() - start) < timeout) {
-    delayMicroseconds(1);         //  less # reads ==> minimizes # glitch reads
+    delayMicroseconds(1);         // less # reads ==> minimizes # glitch reads
     if (digitalRead(_dataPin) == state) {
-      count--;
-      if (count == 0) return false;   //  requested state seen count times
+      count++;
+      if (count == 8) {
+        return false;   //  requested state seen count times
+      }
     }
   }
   return true;
 }
+
 
 #undef SMARTDHT_DISABLE_IRQ
 #undef SMARTDHT_ENABLE_IRQ
@@ -448,6 +459,7 @@ bool SmartDHT::_waitFor(const uint8_t state, const uint32_t timeout)
 #undef SMARTDHT_DHT_WAKEUP
 #undef SMARTDHT_SI7021_WAKEUP
 #undef SMARTDHT_MAX_CYCLES
+#undef SMARTDHT_BIT_THRESHOLD
 #undef SMARTDHT_DHT11_READ_DELAY
 #undef SMARTDHT_DHT22_READ_DELAY
 #undef SMARTDHT_SI7021_READ_DELAY
